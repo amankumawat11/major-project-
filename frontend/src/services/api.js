@@ -1,6 +1,20 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+// Determine API base URL dynamically:
+// 1. If VITE_API_URL environment variable is provided (e.g. Render/external backend), use it.
+// 2. If running locally in development without VITE_API_URL, default to http://localhost:8000/api.
+// 3. In production on Vercel, default to relative path /api (same-origin serverless routing).
+const getApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL.replace(/\/$/, '');
+  }
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://localhost:8000/api';
+  }
+  return '/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 const api = axios.create({
   baseURL: API_BASE_URL,
