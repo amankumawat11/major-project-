@@ -34,11 +34,11 @@ export const RiskBadge = ({ severity, size = 'md' }) => {
       label: 'Low',
     },
     INFORMATIONAL: {
-      bg: 'bg-cyan-500/15',
-      text: 'text-cyan-400',
-      border: 'border-cyan-500/30',
-      icon: Info,
-      label: 'Info',
+      bg: 'bg-emerald-500/15',
+      text: 'text-emerald-300',
+      border: 'border-emerald-500/30',
+      icon: CheckCircle2,
+      label: 'Good',
     },
   };
 

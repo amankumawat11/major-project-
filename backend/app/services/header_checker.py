@@ -69,8 +69,10 @@ REQUIRED_SECURITY_HEADERS = [
 def check_headers_and_disclosure(response: httpx.Response, target_url: str) -> List[Dict[str, Any]]:
     findings = []
     headers_lower = {k.lower(): v for k, v in response.headers.items()}
+    content_type = headers_lower.get("content-type", "").lower()
+    is_html = "text/html" in content_type or not content_type
 
-    # 1. Check Missing Security Headers
+    # 1. Check Missing & Present Security Headers
     for sec_hdr in REQUIRED_SECURITY_HEADERS:
         key = sec_hdr["header_key"]
         if key not in headers_lower:
@@ -79,6 +81,10 @@ def check_headers_and_disclosure(response: httpx.Response, target_url: str) -> L
                 csp_val = headers_lower["content-security-policy"].lower()
                 if "frame-ancestors" in csp_val:
                     continue
+
+            # Only flag missing HTML-specific headers if HTML content is served
+            if key in ("x-frame-options", "content-security-policy") and not is_html:
+                continue
 
             findings.append({
                 "vuln_id": sec_hdr["vuln_id"],
@@ -92,7 +98,7 @@ def check_headers_and_disclosure(response: httpx.Response, target_url: str) -> L
                 "remediation_recommendation": sec_hdr["remediation"]
             })
         else:
-            # Check weak configurations
+            # Header IS present - Check strength or add POSITIVE verified finding
             val = headers_lower[key].strip()
             if key == "content-security-policy":
                 if "'unsafe-inline'" in val or "'unsafe-eval'" in val:
@@ -102,47 +108,132 @@ def check_headers_and_disclosure(response: httpx.Response, target_url: str) -> L
                         "severity": "MEDIUM",
                         "category": "Headers",
                         "description": "The Content-Security-Policy contains 'unsafe-inline' or 'unsafe-eval', significantly reducing XSS protection.",
-                        "evidence": f"CSP Header: {val}",
+                        "evidence": f"CSP Header: {val[:120]}...",
                         "affected_url": target_url,
                         "potential_impact": "Attackers can bypass script execution boundaries using inline script tags or eval-based gadgets.",
                         "remediation_recommendation": "Migrate to cryptographic nonces or SHA-256 hashes for inline scripts and remove 'unsafe-inline' / 'unsafe-eval'."
+                    })
+                else:
+                    findings.append({
+                        "vuln_id": "SEC-HDR-000C",
+                        "title": "Content-Security-Policy (CSP) Active",
+                        "severity": "INFORMATIONAL",
+                        "category": "Headers",
+                        "description": "The website specifies an active Content-Security-Policy, mitigating Cross-Site Scripting (XSS).",
+                        "evidence": f"CSP: {val[:100]}...",
+                        "affected_url": target_url,
+                        "potential_impact": "Status: Good. Restricts unauthorized script execution and remote domain resource loading.",
+                        "remediation_recommendation": "Regularly audit allowed CSP sources and nonces."
                     })
             elif key == "strict-transport-security":
                 match = re.search(r"max-age=(\d+)", val.lower())
                 if match:
                     max_age = int(match.group(1))
-                    if max_age < 15552000: # Less than 180 days
+                    if max_age < 15552000:
                         findings.append({
                             "vuln_id": "SEC-HDR-008",
                             "title": "Short HSTS max-age Duration",
                             "severity": "LOW",
                             "category": "Headers",
-                            "description": f"Strict-Transport-Security max-age is set to {max_age} seconds, which is less than the recommended 6-12 months (>= 15552000).",
+                            "description": f"Strict-Transport-Security max-age is set to {max_age} seconds, less than recommended 6 months.",
                             "evidence": f"HSTS Header: {val}",
                             "affected_url": target_url,
                             "potential_impact": "Browsers will forget the HTTPS enforcement requirement prematurely.",
                             "remediation_recommendation": "Increase HSTS max-age to 31536000 (1 year) and includeSubDomains."
                         })
+                    else:
+                        findings.append({
+                            "vuln_id": "SEC-HDR-000H",
+                            "title": "Strict-Transport-Security (HSTS) Active",
+                            "severity": "INFORMATIONAL",
+                            "category": "Headers",
+                            "description": f"HSTS is actively enforcing encrypted connections across all requests (max-age: {max_age}s).",
+                            "evidence": f"HSTS: {val}",
+                            "affected_url": target_url,
+                            "potential_impact": "Status: Good. Web browsers automatically reject unencrypted plain HTTP communication.",
+                            "remediation_recommendation": "Keep HSTS enabled across all domains and subdomains."
+                        })
+            elif key == "x-frame-options":
+                findings.append({
+                    "vuln_id": "SEC-HDR-000F",
+                    "title": f"Clickjacking Protection Active ({val.upper()})",
+                    "severity": "INFORMATIONAL",
+                    "category": "Headers",
+                    "description": f"The site specifies framing restrictions with X-Frame-Options: {val}.",
+                    "evidence": f"X-Frame-Options: {val}",
+                    "affected_url": target_url,
+                    "potential_impact": "Status: Good. Protects authenticated visitors from UI redressing attacks.",
+                    "remediation_recommendation": "Maintain SAMEORIGIN or DENY framing rules."
+                })
+            elif key == "x-content-type-options" and "nosniff" in val.lower():
+                findings.append({
+                    "vuln_id": "SEC-HDR-000N",
+                    "title": "MIME-Sniffing Defense Active (nosniff)",
+                    "severity": "INFORMATIONAL",
+                    "category": "Headers",
+                    "description": "Browsers are prevented from MIME-sniffing responses away from the declared content-type.",
+                    "evidence": f"X-Content-Type-Options: {val}",
+                    "affected_url": target_url,
+                    "potential_impact": "Status: Good. Prevents malicious user uploads from being executed as scripts.",
+                    "remediation_recommendation": "Maintain X-Content-Type-Options: nosniff on all responses."
+                })
 
-    # 2. Information Disclosure via Headers
-    # Server Banner
+    # 2. CORS Wildcard Check
+    cors_header = headers_lower.get("access-control-allow-origin")
+    if cors_header == "*":
+        findings.append({
+            "vuln_id": "SEC-CORS-001",
+            "title": "Wildcard Cross-Origin Resource Sharing (CORS *)",
+            "severity": "LOW",
+            "category": "Headers",
+            "description": "The response specifies 'Access-Control-Allow-Origin: *', permitting any third-party domain to read resources.",
+            "evidence": "Access-Control-Allow-Origin: *",
+            "affected_url": target_url,
+            "potential_impact": "If applied on authenticated or private endpoints, external sites can read sensitive user data.",
+            "remediation_recommendation": "Restrict Access-Control-Allow-Origin to specific trusted domains rather than wildcard *."
+        })
+
+    # 3. Information Disclosure via Headers
     server_header = headers_lower.get("server")
     if server_header:
-        # Check if it leaks version numbers like Apache/2.4.41 or nginx/1.18.0
         if re.search(r"\d+\.\d+", server_header):
             findings.append({
                 "vuln_id": "SEC-DISC-001",
-                "title": "Detailed Web Server Version Disclosure",
+                "title": f"Detailed Server Version Disclosure ({server_header})",
                 "severity": "LOW",
                 "category": "Information Disclosure",
                 "description": f"The 'Server' header exposes specific server software and version numbers: '{server_header}'.",
                 "evidence": f"Server: {server_header}",
                 "affected_url": target_url,
-                "potential_impact": "Assists attackers in fingerprinting known CVEs and targeting specific unpatched software vulnerabilities.",
+                "potential_impact": "Assists attackers in fingerprinting known CVEs and targeting specific unpatched software versions.",
                 "remediation_recommendation": "Configure ServerTokens Prod (Apache) or server_tokens off (Nginx) to suppress version details."
             })
+        else:
+            findings.append({
+                "vuln_id": "SEC-DISC-000",
+                "title": "Server Version Banners Protected",
+                "severity": "INFORMATIONAL",
+                "category": "Information Disclosure",
+                "description": "The web server does not disclose software patch versions, reducing automated vulnerability fingerprinting.",
+                "evidence": f"Server: {server_header}",
+                "affected_url": target_url,
+                "potential_impact": "Status: Good. Minimizes reconnaissance surface for automated vulnerability scanners.",
+                "remediation_recommendation": "Continue keeping detailed server tokens suppressed."
+            })
+    else:
+        findings.append({
+            "vuln_id": "SEC-DISC-000H",
+            "title": "Server Banner Completely Hidden",
+            "severity": "INFORMATIONAL",
+            "category": "Information Disclosure",
+            "description": "No 'Server' header is disclosed in HTTP responses.",
+            "evidence": "Server header is absent.",
+            "affected_url": target_url,
+            "potential_impact": "Status: Good. Conceals backend server software from automated fingerprinting.",
+            "remediation_recommendation": "Continue suppressing server header signatures."
+        })
 
-    # Technology disclosures (X-Powered-By, X-AspNet-Version, etc.)
+    # Technology disclosures (X-Powered-By, etc.)
     tech_headers = ["x-powered-by", "x-aspnet-version", "x-aspnetmvc-version", "x-generator"]
     for th in tech_headers:
         if th in headers_lower:

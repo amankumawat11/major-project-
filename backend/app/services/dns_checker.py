@@ -7,8 +7,17 @@ def check_dns_and_email_security(domain: str, target_url: str) -> List[Dict[str,
 
     # Initialize resolver with short timeout
     resolver = dns.resolver.Resolver()
-    resolver.timeout = 3.0
-    resolver.lifetime = 3.0
+    resolver.timeout = 2.5
+    resolver.lifetime = 2.5
+
+    # Check if domain has MX records (is configured to receive email)
+    has_mx = False
+    try:
+        mx_records = resolver.resolve(domain, "MX")
+        if mx_records:
+            has_mx = True
+    except Exception:
+        has_mx = False
 
     # 1. Check SPF (Sender Policy Framework)
     has_spf = False
@@ -18,7 +27,6 @@ def check_dns_and_email_security(domain: str, target_url: str) -> List[Dict[str,
             txt_string = "".join(b.decode("utf-8", errors="ignore") for b in rdata.strings)
             if "v=spf1" in txt_string:
                 has_spf = True
-                # Check for weak SPF (+all or ?all)
                 if "+all" in txt_string:
                     findings.append({
                         "vuln_id": "SEC-DNS-001",
@@ -26,23 +34,35 @@ def check_dns_and_email_security(domain: str, target_url: str) -> List[Dict[str,
                         "severity": "HIGH",
                         "category": "DNS/Network",
                         "description": f"The domain's SPF record contains '+all', allowing any mail server on the internet to send email on behalf of {domain}.",
-                        "evidence": f"SPF TXT Record: {txt_string}",
+                        "evidence": f"SPF TXT Record: {txt_string[:100]}",
                         "affected_url": domain,
                         "potential_impact": "Threat actors can easily forge phishing emails impersonating your domain without triggering spam filters.",
                         "remediation_recommendation": "Replace '+all' with '~all' (SoftFail) or '-all' (HardFail) in your SPF record."
                     })
+                else:
+                    findings.append({
+                        "vuln_id": "SEC-DNS-000S",
+                        "title": "SPF Email Authentication Verified",
+                        "severity": "INFORMATIONAL",
+                        "category": "DNS/Network",
+                        "description": f"Domain {domain} publishes an active SPF policy protecting against domain spoofing.",
+                        "evidence": f"SPF TXT: {txt_string[:100]}",
+                        "affected_url": domain,
+                        "potential_impact": "Status: Good. Outbound email is authenticated, minimizing domain impersonation in phishing attacks.",
+                        "remediation_recommendation": "Audit authorized sending IPs periodically."
+                    })
                 break
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout, Exception):
+    except Exception:
         has_spf = False
 
-    if not has_spf:
+    if not has_spf and has_mx:
         findings.append({
             "vuln_id": "SEC-DNS-002",
-            "title": "Missing SPF Record (Email Spoofing Risk)",
+            "title": "Missing SPF Record (Active Mail Domain)",
             "severity": "MEDIUM",
             "category": "DNS/Network",
-            "description": f"No valid SPF (v=spf1) record was found for domain {domain}.",
-            "evidence": f"TXT query for {domain} yielded no SPF record.",
+            "description": f"Domain {domain} has active mail exchangers (MX) but no SPF (v=spf1) record was found.",
+            "evidence": f"TXT query for {domain} yielded no SPF record despite active MX records.",
             "affected_url": domain,
             "potential_impact": "Attackers can spoof email addresses under your domain name, conducting phishing campaigns targeting your users and customers.",
             "remediation_recommendation": "Publish a TXT record with SPF policy (e.g. `v=spf1 include:_spf.google.com ~all`)."
@@ -60,26 +80,38 @@ def check_dns_and_email_security(domain: str, target_url: str) -> List[Dict[str,
                 if "p=none" in txt_string:
                     findings.append({
                         "vuln_id": "SEC-DNS-003",
-                        "title": "DMARC Policy Set to 'none' (Monitoring Only)",
+                        "title": "DMARC Policy in Monitoring Mode (p=none)",
                         "severity": "LOW",
                         "category": "DNS/Network",
-                        "description": "The DMARC policy is set to 'p=none', which logs reports but does not block or quarantine unauthorized spoofed emails.",
+                        "description": "The DMARC policy is set to 'p=none', which logs reports but does not block unauthorized spoofed emails.",
                         "evidence": f"DMARC TXT: {txt_string}",
                         "affected_url": dmarc_domain,
                         "potential_impact": "Spoofed emails will still reach recipient inboxes despite failing authentication.",
                         "remediation_recommendation": "Progressively transition DMARC policy from `p=none` to `p=quarantine` and ultimately `p=reject`."
                     })
+                else:
+                    findings.append({
+                        "vuln_id": "SEC-DNS-000D",
+                        "title": "Strict DMARC Policy Active",
+                        "severity": "INFORMATIONAL",
+                        "category": "DNS/Network",
+                        "description": f"Domain enforces a strict DMARC policy at {dmarc_domain}.",
+                        "evidence": f"DMARC TXT: {txt_string[:100]}",
+                        "affected_url": dmarc_domain,
+                        "potential_impact": "Status: Good. Instructs receiving mail servers to quarantine or reject unauthenticated messages.",
+                        "remediation_recommendation": "Maintain DMARC reporting and enforcement."
+                    })
                 break
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout, Exception):
+    except Exception:
         has_dmarc = False
 
-    if not has_dmarc:
+    if not has_dmarc and has_mx:
         findings.append({
             "vuln_id": "SEC-DNS-004",
-            "title": "Missing DMARC Record",
+            "title": "Missing DMARC Record (Active Mail Domain)",
             "severity": "MEDIUM",
             "category": "DNS/Network",
-            "description": f"No DMARC policy record was detected at {dmarc_domain}.",
+            "description": f"No DMARC policy record was detected at {dmarc_domain} for an active email-handling domain.",
             "evidence": f"TXT lookup on {dmarc_domain} returned no DMARC record.",
             "affected_url": dmarc_domain,
             "potential_impact": "Receiving mail servers have no verified instruction on how to handle unauthenticated email from your domain.",
@@ -89,10 +121,6 @@ def check_dns_and_email_security(domain: str, target_url: str) -> List[Dict[str,
     return findings
 
 def check_authorized_ports(domain: str, target_url: str) -> List[Dict[str, Any]]:
-    """
-    Safe, non-intrusive probe of common standard web services only (80, 443, 8080, 8443).
-    Strictly rate-limited with 1.5s timeout.
-    """
     findings = []
     ports_to_check = [
         (8080, "HTTP Alternate"),

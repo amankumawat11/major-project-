@@ -41,10 +41,14 @@ def check_ssl_tls(target_url: str, domain: str) -> List[Dict[str, Any]]:
                 cipher = ssock.cipher()
                 tls_version = ssock.version()
 
+                # Extract Issuer organization
+                issuer_dict = dict(x[0] for x in cert.get("issuer", []))
+                issuer_name = issuer_dict.get("organizationName") or issuer_dict.get("commonName") or "Trusted Certificate Authority"
+
                 # 1. Certificate Expiry Check
                 not_after_str = cert.get("notAfter")
+                days_remaining = 0
                 if not_after_str:
-                    # Format: 'May  5 12:00:00 2026 GMT'
                     expires_dt = datetime.strptime(not_after_str, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
                     now_dt = datetime.now(timezone.utc)
                     days_remaining = (expires_dt - now_dt).days
@@ -78,7 +82,7 @@ def check_ssl_tls(target_url: str, domain: str) -> List[Dict[str, Any]]:
                 if tls_version in ("TLSv1", "TLSv1.1", "SSLv3", "SSLv2"):
                     findings.append({
                         "vuln_id": "SEC-SSL-004",
-                        "title": f"Depreciated TLS Version ({tls_version})",
+                        "title": f"Deprecated TLS Version ({tls_version})",
                         "severity": "HIGH",
                         "category": "SSL/TLS",
                         "description": f"The server negotiated connection using {tls_version}, which is deprecated and contains cryptographic flaws.",
@@ -101,6 +105,20 @@ def check_ssl_tls(target_url: str, domain: str) -> List[Dict[str, Any]]:
                         "affected_url": target_url,
                         "potential_impact": "Potential certificate validation warnings on strict user agents.",
                         "remediation_recommendation": "Issue a certificate that contains proper SAN extensions for your domain."
+                    })
+
+                # 3. Positive Verified Finding (Status: Good)
+                if days_remaining >= 15 and tls_version not in ("TLSv1", "TLSv1.1", "SSLv3", "SSLv2"):
+                    findings.append({
+                        "vuln_id": "SEC-SSL-000",
+                        "title": f"HTTPS (SSL/TLS) Verified ({tls_version})",
+                        "severity": "INFORMATIONAL",
+                        "category": "SSL/TLS",
+                        "description": f"The website uses HTTPS with a valid certificate issued by {issuer_name}. Certificate is active and valid for {days_remaining} more days.",
+                        "evidence": f"Issuer: {issuer_name}, Protocol: {tls_version}, Cipher: {cipher[0] if cipher else 'Standard'}, Valid Days: {days_remaining}",
+                        "affected_url": target_url,
+                        "potential_impact": "Status: Good. All communication is encrypted with modern cryptography, protecting user data in transit.",
+                        "remediation_recommendation": "Certificate configuration is healthy. Ensure automated renewal (Certbot/ACME) is scheduled."
                     })
 
     except ssl.SSLCertVerificationError as e:

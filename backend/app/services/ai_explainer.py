@@ -210,14 +210,24 @@ Provide your response strictly in the following JSON structure:
         vuln["ai_code_example"] = fallback["code_example"]
         vuln["ai_developer_action"] = fallback["developer_action"]
     else:
-        # Default structured explanation based on category
-        vuln["ai_explanation"] = f"{title} indicates that the website is missing standard security configurations in the {category} category."
-        vuln["ai_why_dangerous"] = vuln.get("potential_impact") or "Without this defense, malicious actors can exploit the gap to intercept data or probe for further misconfigurations."
-        vuln["ai_real_world_example"] = f"An attacker discovers this {severity.lower()}-severity issue during reconnaissance and uses it to facilitate subsequent attacks against site users."
-        vuln["ai_remediation_steps"] = vuln.get("remediation_recommendation") or "Review web server documentation and configure appropriate protective directives."
-        vuln["ai_code_language"] = "nginx"
-        vuln["ai_code_example"] = "# Consult server documentation to apply recommended configuration."
-        vuln["ai_developer_action"] = vuln.get("remediation_recommendation") or f"Implement remediation for {title}."
+        # Check if positive verified control
+        if severity == "INFORMATIONAL":
+            vuln["ai_explanation"] = f"{title}: This defensive control is actively implemented and verified on the website."
+            vuln["ai_why_dangerous"] = "Positive defense active: Mitigates associated attack vectors and protects user sessions."
+            vuln["ai_real_world_example"] = "Automated scanners and threat actors targeting this vector will find this defensive control active."
+            vuln["ai_remediation_steps"] = vuln.get("remediation_recommendation") or "Verified active security control. Maintain current configuration."
+            vuln["ai_code_language"] = "nginx"
+            vuln["ai_code_example"] = "# Active configuration verified."
+            vuln["ai_developer_action"] = "Maintain current security hygiene."
+        else:
+            # Default structured explanation based on category
+            vuln["ai_explanation"] = f"{title} indicates that the website is missing standard security configurations in the {category} category."
+            vuln["ai_why_dangerous"] = vuln.get("potential_impact") or "Without this defense, malicious actors can exploit the gap to intercept data or probe for further misconfigurations."
+            vuln["ai_real_world_example"] = f"An attacker discovers this {severity.lower()}-severity issue during reconnaissance and uses it to facilitate subsequent attacks against site users."
+            vuln["ai_remediation_steps"] = vuln.get("remediation_recommendation") or "Review web server documentation and configure appropriate protective directives."
+            vuln["ai_code_language"] = "nginx"
+            vuln["ai_code_example"] = "# Consult server documentation to apply recommended configuration."
+            vuln["ai_developer_action"] = vuln.get("remediation_recommendation") or f"Implement remediation for {title}."
 
     return vuln
 

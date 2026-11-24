@@ -9,14 +9,14 @@ def test_calculate_security_score_perfect():
 
 def test_calculate_security_score_deductions():
     findings = [
-        {"severity": "CRITICAL"}, # -35
-        {"severity": "HIGH"},     # -20
-        {"severity": "MEDIUM"},   # -10
-        {"severity": "LOW"}       # -3
+        {"vuln_id": "SEC-SSL-002", "severity": "CRITICAL"},  # -35
+        {"vuln_id": "SEC-HDR-001", "severity": "HIGH"},      # -12
+        {"vuln_id": "SEC-HDR-002", "severity": "MEDIUM"},    # -10
+        {"vuln_id": "SEC-HDR-005", "severity": "LOW"}        # -4
     ]
-    # 100 - 35 - 20 - 10 - 3 = 32
+    # 100 - 35 - 12 - 10 - 4 = 39
     result = calculate_security_score(findings)
-    assert result["score"] == 32
+    assert result["score"] == 39
     assert result["risk_level"] == "CRITICAL"
     assert result["critical_count"] == 1
     assert result["high_count"] == 1

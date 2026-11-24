@@ -9,30 +9,85 @@ from app.services.dns_checker import check_dns_and_email_security, check_authori
 from app.services.sensitive_paths_checker import check_sensitive_paths
 from app.security.target_validation import is_ip_blocked
 
-def calculate_security_score(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
+def calculate_security_score(findings: List[Dict[str, Any]], target_url: str = "") -> Dict[str, Any]:
     score = 100
-    crit_count = 0
-    high_count = 0
-    med_count = 0
-    low_count = 0
-    info_count = 0
+    crit_count = sum(1 for f in findings if f.get("severity") == "CRITICAL")
+    high_count = sum(1 for f in findings if f.get("severity") == "HIGH")
+    med_count = sum(1 for f in findings if f.get("severity") == "MEDIUM")
+    low_count = sum(1 for f in findings if f.get("severity") == "LOW")
+    info_count = sum(1 for f in findings if f.get("severity") == "INFORMATIONAL")
 
-    for f in findings:
-        sev = f.get("severity", "LOW").upper()
-        if sev == "CRITICAL":
-            score -= 35
-            crit_count += 1
-        elif sev == "HIGH":
-            score -= 20
-            high_count += 1
-        elif sev == "MEDIUM":
-            score -= 10
-            med_count += 1
-        elif sev == "LOW":
-            score -= 3
-            low_count += 1
-        else:
-            info_count += 1
+    vuln_ids = {f.get("vuln_id") for f in findings}
+
+    # 1. SSL/TLS Cryptography
+    if "SEC-SSL-001" in vuln_ids:  # Plain HTTP
+        score -= 40
+    if "SEC-SSL-002" in vuln_ids:  # Expired SSL
+        score -= 35
+    if "SEC-SSL-006" in vuln_ids:  # Untrusted certificate
+        score -= 30
+    if "SEC-SSL-004" in vuln_ids:  # Deprecated TLS
+        score -= 15
+    if "SEC-SSL-003" in vuln_ids:  # Expiring soon
+        score -= 8
+    if "SEC-SSL-005" in vuln_ids:  # Missing SAN
+        score -= 4
+
+    # 2. Defense-in-Depth HTTP Headers
+    if "SEC-HDR-001" in vuln_ids:  # Missing CSP
+        score -= 12
+    if "SEC-HDR-007" in vuln_ids:  # Permissive CSP
+        score -= 6
+    if "SEC-HDR-002" in vuln_ids:  # Missing HSTS
+        score -= 10
+    if "SEC-HDR-008" in vuln_ids:  # Short HSTS max-age
+        score -= 3
+    if "SEC-HDR-003" in vuln_ids:  # Missing nosniff
+        score -= 6
+    if "SEC-HDR-004" in vuln_ids:  # Missing X-Frame-Options
+        score -= 6
+    if "SEC-HDR-005" in vuln_ids:  # Missing Referrer-Policy
+        score -= 4
+    if "SEC-HDR-006" in vuln_ids:  # Missing Permissions-Policy
+        score -= 2
+    if "SEC-CORS-001" in vuln_ids: # Wildcard CORS *
+        score -= 4
+
+    # 3. Information Disclosure
+    if "SEC-PATH-001" in vuln_ids or "SEC-PATH-002" in vuln_ids:
+        score -= 35
+    if "SEC-DISC-001" in vuln_ids:  # Server version disclosure
+        score -= 5
+    if "SEC-DISC-002" in vuln_ids:  # Tech header disclosure
+        score -= 4
+
+    # 4. Cookies
+    if "SEC-CK-001" in vuln_ids:  # Missing HttpOnly
+        score -= 4
+    if "SEC-CK-002" in vuln_ids:  # Missing Secure
+        score -= 4
+    if "SEC-CK-003" in vuln_ids:  # Missing SameSite
+        score -= 2
+    if "SEC-CK-004" in vuln_ids:  # Insecure SameSite=None
+        score -= 8
+
+    # 5. DNS
+    if "SEC-DNS-001" in vuln_ids:  # Permissive SPF (+all)
+        score -= 8
+    if "SEC-DNS-002" in vuln_ids:  # Missing SPF on active mail host
+        score -= 5
+    if "SEC-DNS-004" in vuln_ids:  # Missing DMARC on active mail host
+        score -= 5
+    if "SEC-DNS-003" in vuln_ids:  # DMARC p=none
+        score -= 2
+
+    # Network failure
+    if "SEC-NET-001" in vuln_ids:
+        score -= 25
+
+    # Safe caps
+    if "SEC-SSL-001" in vuln_ids:
+        score = min(score, 25)
 
     score = max(0, min(100, score))
 
@@ -93,7 +148,7 @@ def run_security_scan(target_url: str, domain: str, scan_mode: str = "quick") ->
         with httpx.Client(
             headers=headers,
             timeout=8.0,
-            verify=False, # We inspect certs manually in ssl_checker; here we capture headers even on self-signed
+            verify=False,
             follow_redirects=True,
             event_hooks={"response": [verify_redirect]}
         ) as client:
@@ -116,7 +171,6 @@ def run_security_scan(target_url: str, domain: str, scan_mode: str = "quick") ->
                 findings.extend(path_findings)
 
     except httpx.RequestError as e:
-        # If HTTP request failed completely, report finding
         findings.append({
             "vuln_id": "SEC-NET-001",
             "title": "HTTP Connection Failed",
@@ -141,7 +195,7 @@ def run_security_scan(target_url: str, domain: str, scan_mode: str = "quick") ->
         findings.extend(port_findings)
 
     duration = round(time.time() - start_time, 2)
-    score_info = calculate_security_score(findings)
+    score_info = calculate_security_score(findings, target_url)
 
     return {
         "findings": findings,
