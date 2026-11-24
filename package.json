@@ -1,0 +1,13 @@
+{
+  "name": "secureexplain-ai",
+  "version": "1.0.0",
+  "description": "SecureExplain AI - Understand vulnerabilities. Fix security risks. Build safer websites.",
+  "scripts": {
+    "dev:frontend": "npm run dev --prefix frontend",
+    "build:frontend": "npm run build --prefix frontend",
+    "dev:backend": "powershell -Command \"$env:PYTHONPATH='backend'; python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000\"",
+    "test:backend": "powershell -Command \"$env:PYTHONPATH='backend'; python -m pytest backend/tests -v\""
+  },
+  "author": "Google DeepMind Engineer",
+  "license": "MIT"
+}
