@@ -3,9 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine, Base
 from app.routers import scanner, history, vulnerabilities, assistant, reports
+import logging
 
-# Ensure database tables are created
-Base.metadata.create_all(bind=engine)
+# Ensure database tables are created safely without crashing in serverless
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    logging.warning(f"Database table auto-creation notice: {e}")
 
 app = FastAPI(
     title="SecureExplain AI - Cybersecurity Analysis API",

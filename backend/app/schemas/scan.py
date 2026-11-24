@@ -4,7 +4,7 @@ from datetime import datetime
 from app.schemas.vulnerability import VulnerabilityResponse
 
 class ScanRequest(BaseModel):
-    target: str = Field(..., description="Target website URL, domain name, or authorized public IP", min_length=3, max_length=512)
+    target: str = Field(..., description="Target website URL, domain name, or authorized public IP", min_length=3, max_length=2048)
     scan_mode: str = Field(default="quick", description="quick, full, passive")
     authorized: bool = Field(default=True, description="Confirmation that the user owns or is authorized to assess this target")
 

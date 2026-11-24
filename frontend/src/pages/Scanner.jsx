@@ -46,8 +46,11 @@ export const Scanner = ({ onNavigateToAssistant }) => {
       setScanResult(result);
     } catch (err) {
       console.error('Scan failed:', err);
-      const msg = err.response?.data?.detail || err.message || 'Failed to complete security scan.';
-      setError(msg);
+      let msg = err.response?.data?.detail || err.message || 'Failed to complete security scan.';
+      if (Array.isArray(msg)) {
+        msg = msg.map((m) => m.msg || JSON.stringify(m)).join(', ');
+      }
+      setError(typeof msg === 'string' ? msg : JSON.stringify(msg));
     } finally {
       setLoading(false);
     }

@@ -9,8 +9,8 @@ class Scan(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     scan_id = Column(String(64), unique=True, index=True, default=lambda: str(uuid.uuid4()))
-    target_url = Column(String(512), nullable=False)
-    target_domain = Column(String(255), nullable=False, index=True)
+    target_url = Column(Text, nullable=False)
+    target_domain = Column(String(512), nullable=False, index=True)
     target_ip = Column(String(64), nullable=True)
     scan_mode = Column(String(32), default="quick")  # quick, full, passive
     status = Column(String(32), default="pending")   # pending, scanning, completed, failed
